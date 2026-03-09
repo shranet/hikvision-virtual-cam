@@ -69,14 +69,12 @@ func runFFmpegStream(ctx context.Context, cam config.Camera) {
 			"-f", "concat",
 			"-safe", "0",
 			"-i", concatFile,
-			"-vf", "fps=1,format=yuv420p",
 			"-c:v", "libx264",
-			"-tune", "stillimage",
-			"-preset", "ultrafast",
-			"-b:v", "500k",
-			"-g", "1",
+			"-preset", "veryfast",
+			"-tune", "zerolatency",
+			"-pix_fmt", "yuv420p",
 			"-f", "rtsp",
-			"-rtsp_flags", "listen",
+			"-rtsp_transport", "tcp",
 			rtspURL,
 		}
 
