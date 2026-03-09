@@ -69,7 +69,7 @@ func main() {
 	fmt.Printf("SADP: UDP multicast 239.255.255.250:37020\n\n")
 	for _, cam := range cameras {
 		fmt.Printf("Kamera %s (%d ta rasm):\n", cam.SN, len(cam.Images))
-		fmt.Printf("  RTSP:  rtsp://localhost:%d/channels/%d\n", cam.RTSPPort, cam.Index)
+		fmt.Printf("  RTSP:  rtsp://localhost:%d/Streaming/channels/%d\n", cam.RTSPPort, cam.Index)
 		fmt.Printf("  ISAPI: http://localhost:%d/ISAPI/Streaming/channels/101/picture\n\n", cam.HttpPort)
 	}
 	fmt.Println("To'xtatish uchun Ctrl+C bosing...")
