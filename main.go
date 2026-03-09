@@ -21,7 +21,7 @@ import (
 
 func main() {
 	imagesDir := flag.String("images", "./images", "Kamera rasmlar papkasi (har bir kamera images/1/, images/2/, ...)")
-	basePort := flag.Int("base-port", 8554, "RTSP boshlang'ich porti (har bir kamera +1)")
+	basePort := flag.Int("base-port", 8554, "mediamtx RTSP porti (barcha kameralar uchun bir xil)")
 	isapiPort := flag.Int("isapi-port", 8080, "ISAPI HTTP boshlang'ich porti (har bir kamera +1)")
 	flag.Parse()
 
@@ -69,7 +69,7 @@ func main() {
 	fmt.Printf("SADP: UDP multicast 239.255.255.250:37020\n\n")
 	for _, cam := range cameras {
 		fmt.Printf("Kamera %s (%d ta rasm):\n", cam.SN, len(cam.Images))
-		fmt.Printf("  RTSP:  rtsp://admin:A112233a@localhost:%d/Streaming/Channels/101\n", cam.RTSPPort)
+		fmt.Printf("  RTSP:  rtsp://localhost:%d/channels/%d\n", cam.RTSPPort, cam.Index)
 		fmt.Printf("  ISAPI: http://localhost:%d/ISAPI/Streaming/channels/101/picture\n\n", cam.HttpPort)
 	}
 	fmt.Println("To'xtatish uchun Ctrl+C bosing...")

@@ -8,7 +8,7 @@ type Camera struct {
 	Index     int      // 1, 2, 3, ...
 	ImagesDir string   // images/1, images/2, ...
 	Images    []string // rasmlar ro'yxati (saralangan)
-	RTSPPort  int      // RTSP stream porti (8554, 8555, ...)
+	RTSPPort  int      // mediamtx RTSP porti (bir xil, barcha kameralar uchun)
 	HttpPort  int      // ISAPI HTTP porti (8080, 8081, ...)
 	IP        string   // har doim "127.0.0.1"
 	MAC       string   // fake MAC
@@ -29,7 +29,7 @@ func BuildCameras(cameraDirs [][]string, baseRTSPPort, baseHttpPort int) []Camer
 			Index:     idx,
 			ImagesDir: dir,
 			Images:    imgs,
-			RTSPPort:  baseRTSPPort + i,
+			RTSPPort:  baseRTSPPort,
 			HttpPort:  baseHttpPort + i,
 			IP:        "127.0.0.1",
 			MAC:       fmt.Sprintf("00:0C:29:AA:BB:%02X", idx),

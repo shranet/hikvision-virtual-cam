@@ -45,7 +45,7 @@ func (s *Server) startCameraServer(ctx context.Context, cam config.Camera) {
 	mux := http.NewServeMux()
 
 	// GET /ISAPI/Streaming/channels/101/picture - keyingi rasmni qaytaradi
-	mux.HandleFunc("/ISAPI/Streaming/channels/101/picture", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(fmt.Sprintf("/ISAPI/Streaming/channels/%d/picture", cam.Index), func(w http.ResponseWriter, r *http.Request) {
 		if len(cam.Images) == 0 {
 			http.Error(w, "no images", http.StatusNotFound)
 			return
