@@ -4,7 +4,7 @@ A Go-based simulator that emulates real Hikvision IP cameras. Useful for testing
 
 Emulated protocols:
 - **SADP** — UDP multicast device discovery (port 37020, group 239.255.255.250)
-- **RTSP** — H.264 video stream via ffmpeg, looping through images at 1 fps
+- **RTSP** — H.264 video stream served by mediamtx; ffmpeg pushes images as a looping 1 fps stream
 - **ISAPI** — HTTP snapshot endpoint returning images round-robin per request
 
 ---
@@ -35,7 +35,10 @@ The SADP server listens on UDP port 37020 and joins the multicast group `239.255
 
 ### RTSP streaming
 
-For each camera, the RTSP manager creates a temporary `ffconcat` playlist (each image shown for 1 second) and launches an `ffmpeg` process in RTSP server (listen) mode:
+RTSP uses a two-component setup:
+
+1. **mediamtx** runs as the RTSP server and listens on `base-port` (default 8554).
+2. For each camera, the app creates a temporary `ffconcat` playlist (each image displayed for 1 second) and launches an **ffmpeg** process that pushes the stream to mediamtx:
 
 ```
 ffmpeg -re -stream_loop -1 -f concat -i <playlist>
@@ -44,7 +47,7 @@ ffmpeg -re -stream_loop -1 -f concat -i <playlist>
        rtsp://localhost:{base-port}/Streaming/channels/{id}
 ```
 
-If a client disconnects, ffmpeg exits and is automatically restarted.
+All cameras push to the same mediamtx instance and are differentiated by their channel path. If ffmpeg exits (e.g. after a client disconnects), it is automatically restarted.
 
 ### ISAPI snapshot
 
@@ -57,14 +60,16 @@ Additional endpoint: `GET /ISAPI/System/deviceInfo` returns device metadata as X
 ## Requirements
 
 - Go 1.22+
-- ffmpeg (for RTSP streaming)
+- **mediamtx** — RTSP server (receives streams from ffmpeg, serves clients)
+- **ffmpeg** — encodes images and pushes the stream to mediamtx
 
 ```bash
 # macOS
-brew install go ffmpeg
+brew install go ffmpeg mediamtx
 
 # Linux (Debian/Ubuntu)
 sudo apt install golang ffmpeg
+# mediamtx: download the latest release from https://github.com/bluenviron/mediamtx/releases
 ```
 
 ---
@@ -90,7 +95,17 @@ cp /path/to/photo2.jpg images/1/
 cp /path/to/other.jpg  images/2/
 ```
 
-### 2. Run
+### 2. Start mediamtx
+
+mediamtx must be running before the app starts, so ffmpeg has an RTSP server to push to.
+
+```bash
+mediamtx
+```
+
+The default config accepts any stream path, so no extra configuration is needed for basic use.
+
+### 3. Run the app
 
 ```bash
 # Default settings
@@ -103,7 +118,7 @@ make run
     -isapi-port 8080
 ```
 
-### 3. Output
+### 4. Output
 
 ```
 === Virtual Hikvision Camera Server ===
@@ -273,4 +288,6 @@ macOS firewall may block incoming UDP packets. Go to **System Settings → Netwo
 
 ### RTSP stream does not connect
 
-Ensure ffmpeg is installed and accessible in `$PATH`. The stream uses TCP transport (`-rtsp_transport tcp`) which is more reliable than UDP over loopback.
+1. Make sure **mediamtx is running** before starting the app — ffmpeg needs an RTSP server to push to.
+2. Ensure **ffmpeg** is installed and accessible in `$PATH`.
+3. The stream uses TCP transport (`-rtsp_transport tcp`), which is more reliable than UDP over loopback.
