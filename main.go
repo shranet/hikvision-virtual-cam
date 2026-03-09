@@ -8,8 +8,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -69,8 +69,8 @@ func main() {
 	fmt.Printf("SADP: UDP multicast 239.255.255.250:37020\n\n")
 	for _, cam := range cameras {
 		fmt.Printf("Kamera %s (%d ta rasm):\n", cam.SN, len(cam.Images))
-		fmt.Printf("  RTSP:  rtsp://localhost:%d/Streaming/channels/%d\n", cam.RTSPPort, cam.Index)
-		fmt.Printf("  ISAPI: http://localhost:%d/ISAPI/Streaming/channels/101/picture\n\n", cam.HttpPort)
+		fmt.Printf("  RTSP:  rtsp://localhost:%d/Streaming/channels/%s\n", cam.RTSPPort, cam.ID)
+		fmt.Printf("  ISAPI: http://localhost:%d/ISAPI/Streaming/channels/%s/picture\n\n", cam.HttpPort, cam.ID)
 	}
 	fmt.Println("To'xtatish uchun Ctrl+C bosing...")
 
@@ -79,9 +79,12 @@ func main() {
 	cancel()
 }
 
-// findCameraDirs - images/1/, images/2/, ... papkalarini numerik tartibda topadi.
+var idPattern = regexp.MustCompile(`^[0-9a-z]+$`)
+
+// findCameraDirs - images/ ichidagi papkalarni topadi.
+// Papka nomi [0-9a-z]+ ga mos tushmasa fatal error bilan to'xtatiladi.
 // Har bir papka ichidagi rasmlar (jpg/png/bmp) saralangan holda qaytariladi.
-func findCameraDirs(imagesDir string) ([][]string, error) {
+func findCameraDirs(imagesDir string) ([]config.CameraDir, error) {
 	exts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".bmp": true}
 
 	entries, err := os.ReadDir(imagesDir)
@@ -89,31 +92,24 @@ func findCameraDirs(imagesDir string) ([][]string, error) {
 		return nil, err
 	}
 
-	type dirEntry struct {
-		num  int
-		path string
-	}
-	var dirs []dirEntry
-
+	var ids []string
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		n, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue // raqam bo'lmagan papkalarni o'tkazib yuboramiz
+		name := e.Name()
+		if !idPattern.MatchString(name) {
+			log.Fatalf("images/ papkasi nomi noto'g'ri: %q - faqat [0-9a-z]+ ruxsat etilgan", name)
 		}
-		dirs = append(dirs, dirEntry{num: n, path: filepath.Join(imagesDir, e.Name())})
+		ids = append(ids, name)
 	}
 
-	// Numerik tartibda saralash (1, 2, 3, ... 10, 11, ...)
-	sort.Slice(dirs, func(i, j int) bool {
-		return dirs[i].num < dirs[j].num
-	})
+	sort.Strings(ids)
 
-	var result [][]string
-	for _, d := range dirs {
-		subEntries, err := os.ReadDir(d.path)
+	var result []config.CameraDir
+	for _, id := range ids {
+		path := filepath.Join(imagesDir, id)
+		subEntries, err := os.ReadDir(path)
 		if err != nil {
 			continue
 		}
@@ -125,12 +121,12 @@ func findCameraDirs(imagesDir string) ([][]string, error) {
 			}
 			ext := strings.ToLower(filepath.Ext(se.Name()))
 			if exts[ext] {
-				images = append(images, filepath.Join(d.path, se.Name()))
+				images = append(images, filepath.Join(path, se.Name()))
 			}
 		}
 
 		if len(images) > 0 {
-			result = append(result, images)
+			result = append(result, config.CameraDir{ID: id, Images: images})
 		}
 	}
 

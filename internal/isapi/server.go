@@ -45,7 +45,7 @@ func (s *Server) startCameraServer(ctx context.Context, cam config.Camera) {
 	mux := http.NewServeMux()
 
 	// GET /ISAPI/Streaming/channels/101/picture - keyingi rasmni qaytaradi
-	mux.HandleFunc(fmt.Sprintf("/ISAPI/Streaming/channels/%d/picture", cam.Index), func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(fmt.Sprintf("/ISAPI/Streaming/channels/%s/picture", cam.ID), func(w http.ResponseWriter, r *http.Request) {
 		if len(cam.Images) == 0 {
 			http.Error(w, "no images", http.StatusNotFound)
 			return
@@ -81,13 +81,13 @@ func (s *Server) startCameraServer(ctx context.Context, cam config.Camera) {
 		w.Header().Set("Content-Type", "application/xml")
 		fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
 <DeviceInfo>
-  <deviceName>Virtual Hikvision Camera #%d</deviceName>
+  <deviceName>Virtual Hikvision Camera #%s</deviceName>
   <deviceID>%s</deviceID>
   <model>DS-2CD2T47G2-L</model>
   <serialNumber>%s</serialNumber>
   <macAddress>%s</macAddress>
   <firmwareVersion>V5.7.15</firmwareVersion>
-</DeviceInfo>`, cam.Index, cam.SN, cam.SN, cam.MAC)
+</DeviceInfo>`, cam.ID, cam.SN, cam.SN, cam.MAC)
 	})
 
 	srv := &http.Server{
@@ -100,8 +100,8 @@ func (s *Server) startCameraServer(ctx context.Context, cam config.Camera) {
 		_ = srv.Shutdown(context.Background())
 	}()
 
-	log.Printf("ISAPI [%s]: http://localhost:%d/ISAPI/Streaming/channels/101/picture (%d ta rasm)",
-		cam.SN, cam.HttpPort, len(cam.Images))
+	log.Printf("ISAPI [%s]: http://localhost:%d/ISAPI/Streaming/channels/%s/picture (%d ta rasm)",
+		cam.SN, cam.HttpPort, cam.ID, len(cam.Images))
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Printf("ISAPI [%s]: server xatosi: %v", cam.SN, err)

@@ -42,7 +42,7 @@ func (m *Manager) Start(ctx context.Context) error {
 // ffmpeg -rtsp_flags listen: server mode, klientni kutadi va ulanganida stream qiladi.
 // Klient uzilgach ffmpeg chiqadi, loop uni qayta ishga tushiradi.
 func runFFmpegStream(ctx context.Context, cam config.Camera) {
-	rtspURL := fmt.Sprintf("rtsp://localhost:%d/Streaming/channels/%d", cam.RTSPPort, cam.Index)
+	rtspURL := fmt.Sprintf("rtsp://localhost:%d/Streaming/channels/%s", cam.RTSPPort, cam.ID)
 	log.Printf("RTSP [%s]: Ishga tushmoqda -> %s (%d ta rasm)", cam.SN, rtspURL, len(cam.Images))
 
 	// Concat faylni bir marta yaratamiz, funksiya chiqishida o'chiramiz

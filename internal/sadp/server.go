@@ -143,7 +143,7 @@ func (s *Server) buildResponse(probeUuid string, cam config.Camera) ProbeRespons
 		Uuid:              probeUuid,
 		Types:             "HIK_DS-2CD2T47G2-L",
 		DeviceType:        "virtualcam",
-		DeviceDescription: fmt.Sprintf("Virtual Hikvision Camera #%d", cam.Index),
+		DeviceDescription: fmt.Sprintf("Virtual Hikvision Camera #%s", cam.ID),
 		DeviceSN:          cam.SN,
 		CommandPort:       cam.RTSPPort,
 		HttpPort:          cam.HttpPort,
