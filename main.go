@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -18,21 +20,25 @@ import (
 )
 
 func main() {
-	imagesDir := flag.String("images", "./images", "Rasmlar joylashgan papka")
+	imagesDir := flag.String("images", "./images", "Kamera rasmlar papkasi (har bir kamera images/1/, images/2/, ...)")
 	basePort := flag.Int("base-port", 8554, "RTSP boshlang'ich porti (har bir kamera +1)")
 	isapiPort := flag.Int("isapi-port", 8080, "ISAPI HTTP boshlang'ich porti (har bir kamera +1)")
 	flag.Parse()
 
-	images, err := findImages(*imagesDir)
-	if err != nil || len(images) == 0 {
-		log.Fatalf("Rasmlar topilmadi '%s' papkasida: %v", *imagesDir, err)
+	// images/1/, images/2/, ... papkalaridan kamera rasmlarini topamiz
+	cameraDirs, err := findCameraDirs(*imagesDir)
+	if err != nil || len(cameraDirs) == 0 {
+		log.Fatalf("Kamera papkalari topilmadi '%s' ichida: %v\n"+
+			"  Kutilayotgan tuzilma:\n"+
+			"    images/1/photo1.jpg\n"+
+			"    images/1/photo2.jpg\n"+
+			"    images/2/photo1.jpg\n", *imagesDir, err)
 	}
 
-	log.Printf("Topilgan rasmlar: %d ta", len(images))
-
-	cameras := config.BuildCameras(images, *basePort, *isapiPort)
+	cameras := config.BuildCameras(cameraDirs, *basePort, *isapiPort)
 	for _, cam := range cameras {
-		log.Printf("  Kamera %s -> RTSP:%d, HTTP:%d -> %s", cam.SN, cam.RTSPPort, cam.HttpPort, cam.ImagePath)
+		log.Printf("  Kamera %s -> RTSP:%d, HTTP:%d, rasmlar:%d (%s)",
+			cam.SN, cam.RTSPPort, cam.HttpPort, len(cam.Images), cam.ImagesDir)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -41,23 +47,20 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 
-	rtspManager := rtsp.NewManager(cameras)
 	go func() {
-		if err := rtspManager.Start(ctx); err != nil {
+		if err := rtsp.NewManager(cameras).Start(ctx); err != nil {
 			log.Printf("RTSP manager xatosi: %v", err)
 		}
 	}()
 
-	isapiServer := isapi.NewServer(cameras)
 	go func() {
-		if err := isapiServer.Start(ctx); err != nil {
+		if err := isapi.NewServer(cameras).Start(ctx); err != nil {
 			log.Printf("ISAPI server xatosi: %v", err)
 		}
 	}()
 
-	sadpServer := sadp.NewServer(cameras)
 	go func() {
-		if err := sadpServer.Start(ctx); err != nil {
+		if err := sadp.NewServer(cameras).Start(ctx); err != nil {
 			log.Printf("SADP server xatosi: %v", err)
 		}
 	}()
@@ -65,10 +68,9 @@ func main() {
 	fmt.Println("\n=== Virtual Hikvision Camera Server ===")
 	fmt.Printf("SADP: UDP multicast 239.255.255.250:37020\n\n")
 	for _, cam := range cameras {
-		fmt.Printf("Kamera %s:\n", cam.SN)
+		fmt.Printf("Kamera %s (%d ta rasm):\n", cam.SN, len(cam.Images))
 		fmt.Printf("  RTSP:  rtsp://admin:A112233a@localhost:%d/Streaming/Channels/101\n", cam.RTSPPort)
-		fmt.Printf("  ISAPI: http://localhost:%d/ISAPI/Streaming/channels/101/picture\n", cam.HttpPort)
-		fmt.Printf("  Rasm:  %s\n\n", cam.ImagePath)
+		fmt.Printf("  ISAPI: http://localhost:%d/ISAPI/Streaming/channels/101/picture\n\n", cam.HttpPort)
 	}
 	fmt.Println("To'xtatish uchun Ctrl+C bosing...")
 
@@ -77,23 +79,60 @@ func main() {
 	cancel()
 }
 
-func findImages(dir string) ([]string, error) {
+// findCameraDirs - images/1/, images/2/, ... papkalarini numerik tartibda topadi.
+// Har bir papka ichidagi rasmlar (jpg/png/bmp) saralangan holda qaytariladi.
+func findCameraDirs(imagesDir string) ([][]string, error) {
 	exts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".bmp": true}
-	var images []string
 
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(imagesDir)
 	if err != nil {
 		return nil, err
 	}
 
+	type dirEntry struct {
+		num  int
+		path string
+	}
+	var dirs []dirEntry
+
 	for _, e := range entries {
-		if e.IsDir() {
+		if !e.IsDir() {
 			continue
 		}
-		ext := strings.ToLower(filepath.Ext(e.Name()))
-		if exts[ext] {
-			images = append(images, filepath.Join(dir, e.Name()))
+		n, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue // raqam bo'lmagan papkalarni o'tkazib yuboramiz
+		}
+		dirs = append(dirs, dirEntry{num: n, path: filepath.Join(imagesDir, e.Name())})
+	}
+
+	// Numerik tartibda saralash (1, 2, 3, ... 10, 11, ...)
+	sort.Slice(dirs, func(i, j int) bool {
+		return dirs[i].num < dirs[j].num
+	})
+
+	var result [][]string
+	for _, d := range dirs {
+		subEntries, err := os.ReadDir(d.path)
+		if err != nil {
+			continue
+		}
+
+		var images []string
+		for _, se := range subEntries {
+			if se.IsDir() {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(se.Name()))
+			if exts[ext] {
+				images = append(images, filepath.Join(d.path, se.Name()))
+			}
+		}
+
+		if len(images) > 0 {
+			result = append(result, images)
 		}
 	}
-	return images, nil
+
+	return result, nil
 }

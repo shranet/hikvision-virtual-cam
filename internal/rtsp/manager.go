@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 
 	"github.com/shranet/hikvision-virtual-cam/internal/config"
@@ -20,12 +21,11 @@ func NewManager(cameras []config.Camera) *Manager {
 	return &Manager{cameras: cameras}
 }
 
-// Start - barcha kameralar uchun ffmpeg RTSP listen mode da ishga tushiradi
+// Start - har bir kamera uchun alohida ffmpeg RTSP listen-mode stream ishga tushiradi
 func (m *Manager) Start(ctx context.Context) error {
 	checkDependencies()
 
 	var wg sync.WaitGroup
-
 	for _, cam := range m.cameras {
 		wg.Add(1)
 		go func(c config.Camera) {
@@ -38,11 +38,20 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
-// runFFmpegStream - bitta kamera uchun ffmpeg RTSP server sifatida ishlatadi
-// ffmpeg -rtsp_flags listen bilan klientni kutadi va stream qiladi
+// runFFmpegStream - bitta kamera uchun rasmlarni 1fps da loop qilib RTSP stream qiladi.
+// ffmpeg -rtsp_flags listen: server mode, klientni kutadi va ulanganida stream qiladi.
+// Klient uzilgach ffmpeg chiqadi, loop uni qayta ishga tushiradi.
 func runFFmpegStream(ctx context.Context, cam config.Camera) {
 	rtspURL := fmt.Sprintf("rtsp://localhost:%d/Streaming/Channels/101", cam.RTSPPort)
-	log.Printf("RTSP [%s]: Ishga tushmoqda -> %s", cam.SN, rtspURL)
+	log.Printf("RTSP [%s]: Ishga tushmoqda -> %s (%d ta rasm)", cam.SN, rtspURL, len(cam.Images))
+
+	// Concat faylni bir marta yaratamiz, funksiya chiqishida o'chiramiz
+	concatFile, err := createConcatFile(cam)
+	if err != nil {
+		log.Printf("RTSP [%s]: concat fayl yaratishda xato: %v", cam.SN, err)
+		return
+	}
+	defer os.Remove(concatFile)
 
 	for {
 		select {
@@ -52,28 +61,26 @@ func runFFmpegStream(ctx context.Context, cam config.Camera) {
 		default:
 		}
 
-		// Still image (jpg/png) ni loop qilib RTSP server sifatida stream qiladi.
-		// -loop 1         : rasmni cheksiz takrorlaydi
-		// -framerate 10   : 10fps kirishda o'qiydi
-		// -rtsp_flags listen : server mode, klientni kutadi
+		// ffconcat + stream_loop orqali rasmlarni 1fps da cheksiz loop qiladi.
+		// -g 1: har kadr keyframe (1fps uchun zarur).
 		args := []string{
 			"-re",
-			"-loop", "1",
-			"-framerate", "1",
-			"-i", cam.ImagePath,
+			"-stream_loop", "-1",
+			"-f", "concat",
+			"-safe", "0",
+			"-i", concatFile,
 			"-vf", "fps=1,format=yuv420p",
 			"-c:v", "libx264",
 			"-tune", "stillimage",
 			"-preset", "ultrafast",
 			"-b:v", "500k",
-			"-g", "20",
+			"-g", "1",
 			"-f", "rtsp",
 			"-rtsp_flags", "listen",
 			rtspURL,
 		}
 
 		cmd := exec.CommandContext(ctx, "ffmpeg", args...)
-		cmd.Stdout = nil
 		cmd.Stderr = os.Stderr
 
 		if err := cmd.Run(); err != nil {
@@ -81,10 +88,31 @@ func runFFmpegStream(ctx context.Context, cam config.Camera) {
 			case <-ctx.Done():
 				return
 			default:
-				log.Printf("RTSP [%s]: Qayta ishga tushirilmoqda (xato: %v)", cam.SN, err)
+				log.Printf("RTSP [%s]: Qayta ishga tushirilmoqda", cam.SN)
 			}
 		}
 	}
+}
+
+// createConcatFile - ffconcat formatida vaqtinchalik fayl yaratadi.
+// Har bir rasm 1 soniya davomida ko'rsatiladi.
+func createConcatFile(cam config.Camera) (string, error) {
+	f, err := os.CreateTemp("", fmt.Sprintf("hikvision_%s_*.txt", cam.SN))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	fmt.Fprintln(f, "ffconcat version 1.0")
+	for _, img := range cam.Images {
+		abs, err := filepath.Abs(img)
+		if err != nil {
+			abs = img
+		}
+		fmt.Fprintf(f, "file '%s'\n", abs)
+		fmt.Fprintln(f, "duration 1")
+	}
+	return f.Name(), nil
 }
 
 func checkDependencies() {

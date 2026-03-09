@@ -4,24 +4,31 @@ import "fmt"
 
 // Camera - bitta virtual kamera konfiguratsiyasi
 type Camera struct {
-	SN        string // virtualcam_1, virtualcam_2, ...
-	Index     int    // 1, 2, 3, ...
-	ImagePath string // rasm fayl yo'li
-	RTSPPort  int    // RTSP stream porti (8554, 8555, ...)
-	HttpPort  int    // ISAPI HTTP porti (8080, 8081, ...)
-	IP        string // har doim "127.0.0.1"
-	MAC       string // fake MAC
+	SN        string   // virtualcam_1, virtualcam_2, ...
+	Index     int      // 1, 2, 3, ...
+	ImagesDir string   // images/1, images/2, ...
+	Images    []string // rasmlar ro'yxati (saralangan)
+	RTSPPort  int      // RTSP stream porti (8554, 8555, ...)
+	HttpPort  int      // ISAPI HTTP porti (8080, 8081, ...)
+	IP        string   // har doim "127.0.0.1"
+	MAC       string   // fake MAC
 }
 
-// BuildCameras - rasmlar ro'yxatidan kameralar ro'yxati yasaydi
-func BuildCameras(images []string, baseRTSPPort, baseHttpPort int) []Camera {
-	cameras := make([]Camera, len(images))
-	for i, img := range images {
+// BuildCameras - papkalar ro'yxatidan kameralar ro'yxati yasaydi.
+// cameraDirs[i] = i-kamera uchun rasmlar ro'yxati (images/1/, images/2/, ...).
+func BuildCameras(cameraDirs [][]string, baseRTSPPort, baseHttpPort int) []Camera {
+	cameras := make([]Camera, len(cameraDirs))
+	for i, imgs := range cameraDirs {
 		idx := i + 1
+		dir := ""
+		if len(imgs) > 0 {
+			dir = fmt.Sprintf("images/%d", idx)
+		}
 		cameras[i] = Camera{
 			SN:        fmt.Sprintf("virtualcam_%d", idx),
 			Index:     idx,
-			ImagePath: img,
+			ImagesDir: dir,
+			Images:    imgs,
 			RTSPPort:  baseRTSPPort + i,
 			HttpPort:  baseHttpPort + i,
 			IP:        "127.0.0.1",
