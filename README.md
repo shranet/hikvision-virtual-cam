@@ -1,216 +1,276 @@
 # Virtual Hikvision Camera Server
 
-Go tilida yozilgan virtual Hikvision kamera simulyatori. Haqiqiy Hikvision kamera protokollarini emulatsiya qiladi:
+A Go-based simulator that emulates real Hikvision IP cameras. Useful for testing NVR software, VMS integrations, or any system that needs to discover and stream from Hikvision cameras — without physical hardware.
 
-- **SADP** — UDP multicast orqali kameralarni discovery
-- **RTSP** — ffmpeg orqali rasm fayllarini video stream sifatida uzatish
-- **ISAPI** — HTTP orqali snapshot (rasm) qaytarish
+Emulated protocols:
+- **SADP** — UDP multicast device discovery (port 37020, group 239.255.255.250)
+- **RTSP** — H.264 video stream via ffmpeg, looping through images at 1 fps
+- **ISAPI** — HTTP snapshot endpoint returning images round-robin per request
 
 ---
 
-## O'rnatish
+## How It Works
 
-### Talablar
+### Image directories → Virtual cameras
 
-- Go 1.21+
-- ffmpeg (RTSP stream uchun)
-- *(ixtiyoriy)* mediamtx — agar ffmpeg listen mode ishlashida muammo bo'lsa
+Each subdirectory under `images/` becomes one virtual camera. The directory name becomes the camera's channel ID and must match `[0-9a-z]+`.
+
+```
+images/
+├── 1/          → camera "virtualcam_1"     (RTSP channel: 1,     HTTP port: 8080)
+├── 2/          → camera "virtualcam_2"     (RTSP channel: 2,     HTTP port: 8081)
+└── lobby/      → camera "virtualcam_lobby" (RTSP channel: lobby, HTTP port: 8082)
+```
+
+Supported image formats: `.jpg`, `.jpeg`, `.png`, `.bmp`
+
+### SADP discovery
+
+The SADP server listens on UDP port 37020 and joins the multicast group `239.255.255.250` on all available network interfaces. When a client sends a `<Probe Types="inquiry">` XML packet, the server replies with a `<ProbeMatch>` response for each virtual camera, advertising:
+
+- Device serial number (`virtualcam_{id}`)
+- Emulated model: `HIK_DS-2CD2T47G2-L`, firmware `V5.7.15`
+- Fake MAC address: `00:0C:29:AA:BB:{index}`
+- RTSP and HTTP ports
+
+### RTSP streaming
+
+For each camera, the RTSP manager creates a temporary `ffconcat` playlist (each image shown for 1 second) and launches an `ffmpeg` process in RTSP server (listen) mode:
+
+```
+ffmpeg -re -stream_loop -1 -f concat -i <playlist>
+       -c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p
+       -f rtsp -rtsp_transport tcp
+       rtsp://localhost:{base-port}/Streaming/channels/{id}
+```
+
+If a client disconnects, ffmpeg exits and is automatically restarted.
+
+### ISAPI snapshot
+
+Each camera runs its own HTTP server on `base-isapi-port + index`. Every `GET /ISAPI/Streaming/channels/{id}/picture` request returns the next image in rotation (round-robin, independent of the RTSP stream).
+
+Additional endpoint: `GET /ISAPI/System/deviceInfo` returns device metadata as XML.
+
+---
+
+## Requirements
+
+- Go 1.22+
+- ffmpeg (for RTSP streaming)
 
 ```bash
 # macOS
-brew install go
-brew install ffmpeg
+brew install go ffmpeg
 
-# mediamtx (ixtiyoriy)
-brew install mediamtx
+# Linux (Debian/Ubuntu)
+sudo apt install golang ffmpeg
 ```
 
-### Loyihani yuklab olish
+---
+
+## Installation
 
 ```bash
-git clone <repo>
+git clone https://github.com/shranet/hikvision-virtual-cam
 cd hikvision-virtual-cam
-make deps
 make build
 ```
 
 ---
 
-## Ishlatish
+## Usage
 
-### 1. Rasmlar papkasini tayyorlang
+### 1. Prepare image directories
 
 ```bash
-mkdir images
-cp /path/to/your/photo1.jpg images/
-cp /path/to/your/photo2.jpg images/
-cp /path/to/your/photo3.png images/
+mkdir -p images/1 images/2
+cp /path/to/photo1.jpg images/1/
+cp /path/to/photo2.jpg images/1/
+cp /path/to/other.jpg  images/2/
 ```
 
-Har bir rasm = 1 ta virtual kamera.
-
-### 2. Ishga tushiring
+### 2. Run
 
 ```bash
-# Default sozlamalar bilan
+# Default settings
 make run
 
-# Yoki parametrlar bilan
+# Custom ports
 ./hikvision-virtual-cam \
-    -images ./images \
-    -base-port 8554 \
+    -images     ./images \
+    -base-port  8554 \
     -isapi-port 8080
 ```
 
-### 3. Natija
+### 3. Output
 
 ```
 === Virtual Hikvision Camera Server ===
-ISAPI: http://localhost:8080
 SADP: UDP multicast 239.255.255.250:37020
 
-Kamera virtualcam_1: rtsp://admin:A112233a@localhost:8554/Streaming/Channels/101
-                     http://localhost:8080/ISAPI/Streaming/channels/101/picture
+Camera virtualcam_1 (2 images):
+  RTSP:  rtsp://localhost:8554/Streaming/channels/1
+  ISAPI: http://localhost:8080/ISAPI/Streaming/channels/1/picture
 
-Kamera virtualcam_2: rtsp://admin:A112233a@localhost:8555/Streaming/Channels/101
-                     http://localhost:8080/ISAPI/Streaming/channels/201/picture
+Camera virtualcam_2 (1 images):
+  RTSP:  rtsp://localhost:8554/Streaming/channels/2
+  ISAPI: http://localhost:8081/ISAPI/Streaming/channels/2/picture
 ```
 
 ---
 
-## Testlash
+## Endpoints
 
-### SADP Discovery testi
+### RTSP stream
+
+```
+rtsp://localhost:{base-port}/Streaming/channels/{id}
+```
+
+All cameras share the same RTSP port and are differentiated by channel path.
+
+### ISAPI snapshot
+
+```
+http://localhost:{isapi-port + camera-index}/ISAPI/Streaming/channels/{id}/picture
+```
+
+Each request returns the next image in the camera's directory (cycles back to the first after the last).
+
+| Camera dir   | HTTP port (default) | Snapshot URL |
+|--------------|---------------------|--------------|
+| `images/1/`  | 8080 | `http://localhost:8080/ISAPI/Streaming/channels/1/picture` |
+| `images/2/`  | 8081 | `http://localhost:8081/ISAPI/Streaming/channels/2/picture` |
+| `images/3/`  | 8082 | `http://localhost:8082/ISAPI/Streaming/channels/3/picture` |
+
+### ISAPI device info
+
+```
+http://localhost:{isapi-port + camera-index}/ISAPI/System/deviceInfo
+```
+
+Returns device metadata (name, model, serial number, MAC, firmware) as XML.
+
+---
+
+## CLI Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-images` | `./images` | Root directory containing camera subdirectories |
+| `-base-port` | `8554` | RTSP server port (shared by all cameras, differentiated by channel path) |
+| `-isapi-port` | `8080` | Base HTTP port; each camera gets `base + index` |
+
+---
+
+## Testing
+
+### SADP discovery
 
 ```bash
-# Alohida terminal ochib:
+# Send a multicast probe and print discovered cameras
 go run ./tools/sadp-probe/main.go
 
-# Yoki:
+# Or via Make
 make test-sadp
 ```
 
-### ISAPI rasm testi
+### ISAPI snapshot
 
 ```bash
-# Birinchi kamera rasmi
-curl -o /tmp/cam1.jpg "http://localhost:8080/ISAPI/Streaming/channels/101/picture"
+# Fetch snapshot from camera 1
+curl -o /tmp/cam1.jpg http://localhost:8080/ISAPI/Streaming/channels/1/picture
 
-# Ikkinchi kamera rasmi
-curl -o /tmp/cam2.jpg "http://localhost:8080/ISAPI/Streaming/channels/201/picture"
+# Fetch device info
+curl http://localhost:8080/ISAPI/System/deviceInfo
 
-# SN orqali
-curl -o /tmp/cam1.jpg "http://localhost:8080/ISAPI/Streaming/channels/101/picture?sn=virtualcam_1"
-
-# Index orqali
-curl -o /tmp/cam1.jpg "http://localhost:8080/ISAPI/Streaming/channels/101/picture?index=1"
+# Make target (saves to /tmp/test_cam1.jpg)
+make test-isapi
 ```
 
-### RTSP stream testi
+### RTSP stream
 
 ```bash
-# ffplay orqali ko'rish
-ffplay rtsp://localhost:8554/Streaming/Channels/101
+# Play in ffplay
+ffplay rtsp://localhost:8554/Streaming/channels/1
 
-# ffprobe orqali info
-ffprobe -v quiet -print_format json -show_streams rtsp://localhost:8554/Streaming/Channels/101
+# Inspect stream metadata
+ffprobe -v quiet -print_format json -show_streams \
+    rtsp://localhost:8554/Streaming/channels/1
 
-# VLC orqali
-vlc rtsp://localhost:8554/Streaming/Channels/101
+# Play in VLC
+vlc rtsp://localhost:8554/Streaming/channels/1
+
+# Make target (runs ffprobe)
+make test-rtsp
 ```
 
 ---
 
-## URL Formatlari
-
-### RTSP
-```
-rtsp://admin:A112233a@localhost:{BASE_PORT + camera_index - 1}/Streaming/Channels/101
-
-Misol:
-  Kamera 1: rtsp://admin:A112233a@localhost:8554/Streaming/Channels/101
-  Kamera 2: rtsp://admin:A112233a@localhost:8555/Streaming/Channels/101
-  Kamera 3: rtsp://admin:A112233a@localhost:8556/Streaming/Channels/101
-```
-
-### ISAPI Picture
-```
-http://localhost:{ISAPI_PORT}/ISAPI/Streaming/channels/{CHANNEL_ID}/picture
-
-CHANNEL_ID = kamera_index * 100 + 1
-  Kamera 1: /ISAPI/Streaming/channels/101/picture
-  Kamera 2: /ISAPI/Streaming/channels/201/picture
-  Kamera 3: /ISAPI/Streaming/channels/301/picture
-
-Parametrlar bilan:
-  ?sn=virtualcam_1   (serial number orqali)
-  ?index=1           (index orqali)
-```
-
-### Kameralar ro'yxati
-```
-http://localhost:8080/cameras
-```
-
----
-
-## Parametrlar
-
-| Parametr | Default | Ta'rif |
-|----------|---------|--------|
-| `-images` | `./images` | Rasmlar papkasi |
-| `-base-port` | `8554` | Birinchi kamera RTSP porti |
-| `-isapi-port` | `8080` | ISAPI HTTP server porti |
-
----
-
-## Loyiha tuzilmasi
+## Project Structure
 
 ```
 hikvision-virtual-cam/
-├── cmd/
-│   └── main.go              # Asosiy entry point
+├── main.go                      # Entry point: parses flags, builds cameras, starts servers
 ├── internal/
 │   ├── config/
-│   │   └── config.go        # Kamera konfiguratsiyasi
+│   │   └── config.go            # Camera struct and BuildCameras factory
 │   ├── sadp/
-│   │   └── server.go        # SADP UDP discovery server
+│   │   └── server.go            # UDP multicast SADP discovery server
 │   ├── rtsp/
-│   │   └── manager.go       # RTSP stream manager (ffmpeg)
+│   │   └── manager.go           # ffmpeg-based RTSP stream manager
 │   └── isapi/
-│       └── server.go        # ISAPI HTTP server
+│       └── server.go            # Per-camera ISAPI HTTP server
 ├── tools/
 │   └── sadp-probe/
-│       └── main.go          # SADP test tool
-├── images/                  # Rasmlar (siz qo'shasiz)
-├── mediamtx.yml             # mediamtx konfiguratsiyasi
+│       └── main.go              # CLI tool: sends SADP probe, prints discovered cameras
+├── images/                      # Place your camera image directories here
 ├── Makefile
-└── README.md
+├── go.mod
+└── go.sum
 ```
 
 ---
 
-## Muammolar va yechimlar
+## Makefile Targets
 
-### ffmpeg "listen" mode ishlashmasa
+| Target | Description |
+|--------|-------------|
+| `make build` | Compile the binary |
+| `make run` | Build and run with default settings |
+| `make test-sadp` | Run SADP probe tool |
+| `make test-isapi` | Fetch snapshot from camera 1 via curl |
+| `make test-rtsp` | Inspect RTSP stream with ffprobe |
+| `make install-deps` | Install ffmpeg via Homebrew (macOS) |
+| `make clean` | Remove binary and kill any leftover ffmpeg processes |
 
-`-rtsp_flags listen` ba'zi versiyalarda ishlamasligi mumkin. Bu holda **mediamtx** ishlating:
+---
+
+## Troubleshooting
+
+### Port already in use
 
 ```bash
-# Terminal 1: mediamtx
-mediamtx mediamtx.yml
-
-# Terminal 2: app (push mode)
-# manager.go da listen flag ni olib, push mode ga o'zgartiring
+./hikvision-virtual-cam -base-port 9554 -isapi-port 9080
 ```
 
-### Port band bo'lsa
+### No cameras found at startup
 
-```bash
-# Boshqa portni ishlating
-./hikvision-virtual-cam -base-port 9554
+The app expects at least one subdirectory under `images/` containing image files:
+
+```
+images/
+└── 1/
+    └── photo.jpg    ← at least one image required
 ```
 
-### macOS firewall muammosi
+Directory names must match `[0-9a-z]+` — no uppercase, no spaces, no special characters.
 
-SADP UDP multicast uchun firewall ruxsat berishi kerak. System Preferences → Security → Firewall → Allow incoming connections.
+### SADP not receiving responses (macOS)
+
+macOS firewall may block incoming UDP packets. Go to **System Settings → Network → Firewall** and allow incoming connections for the binary, or temporarily disable the firewall for testing.
+
+### RTSP stream does not connect
+
+Ensure ffmpeg is installed and accessible in `$PATH`. The stream uses TCP transport (`-rtsp_transport tcp`) which is more reliable than UDP over loopback.
