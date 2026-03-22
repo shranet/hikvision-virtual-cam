@@ -1,6 +1,20 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"net"
+)
+
+// GetLocalIP - kompyuterning local IP manzilini qaytaradi (127.0.0.1 emas)
+func GetLocalIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "127.0.0.1"
+	}
+	defer conn.Close()
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
+}
 
 // CameraDir - kamera papkasi ma'lumotlari (ID = papka nomi)
 type CameraDir struct {
@@ -16,7 +30,7 @@ type Camera struct {
 	Images    []string // rasmlar ro'yxati (saralangan)
 	RTSPPort  int      // mediamtx RTSP porti (bir xil, barcha kameralar uchun)
 	HttpPort  int      // ISAPI HTTP porti (8080, 8081, ...)
-	IP        string   // har doim "127.0.0.1"
+	IP        string   // kompyuterning local IP manzili
 	MAC       string   // fake MAC
 }
 
@@ -31,7 +45,7 @@ func BuildCameras(cameraDirs []CameraDir, baseRTSPPort, baseHttpPort int) []Came
 			Images:    d.Images,
 			RTSPPort:  baseRTSPPort,
 			HttpPort:  baseHttpPort + i,
-			IP:        "127.0.0.1",
+			IP:        GetLocalIP(),
 			MAC:       fmt.Sprintf("00:0C:29:AA:BB:%02X", i+1),
 		}
 	}
