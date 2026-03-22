@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/shranet/hikvision-virtual-cam/internal/config"
 )
@@ -41,9 +43,35 @@ func (m *Manager) Start(ctx context.Context) error {
 // runFFmpegStream - bitta kamera uchun rasmlarni 1fps da loop qilib RTSP stream qiladi.
 // ffmpeg -rtsp_flags listen: server mode, klientni kutadi va ulanganida stream qiladi.
 // Klient uzilgach ffmpeg chiqadi, loop uni qayta ishga tushiradi.
+// waitForMediamtx - mediamtx port 8554 da tayyor bo'lguncha kutadi
+func waitForMediamtx(ctx context.Context, port int) {
+	addr := fmt.Sprintf("localhost:%d", port)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			conn.Close()
+			log.Printf("RTSP: mediamtx tayyor (%s)", addr)
+			return
+		}
+		log.Printf("RTSP: mediamtx kutilmoqda (%s)...", addr)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
 func runFFmpegStream(ctx context.Context, cam config.Camera) {
 	rtspURL := fmt.Sprintf("rtsp://localhost:%d/Streaming/channels/%s", cam.RTSPPort, cam.ID)
 	log.Printf("RTSP [%s]: Ishga tushmoqda -> %s (%d ta rasm)", cam.SN, rtspURL, len(cam.Images))
+
+	waitForMediamtx(ctx, cam.RTSPPort)
 
 	// Concat faylni bir marta yaratamiz, funksiya chiqishida o'chiramiz
 	concatFile, err := createConcatFile(cam)
@@ -86,7 +114,8 @@ func runFFmpegStream(ctx context.Context, cam config.Camera) {
 			case <-ctx.Done():
 				return
 			default:
-				log.Printf("RTSP [%s]: Qayta ishga tushirilmoqda", cam.SN)
+				log.Printf("RTSP [%s]: Qayta ishga tushirilmoqda (3s kutilmoqda...)", cam.SN)
+				waitForMediamtx(ctx, cam.RTSPPort)
 			}
 		}
 	}
